@@ -1,0 +1,15 @@
+# The throwaway kind cluster in pull request CI: the image is loaded with `kind load`,
+# and the smoke test reaches the app through port-forward, so there is no route.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: ai-insight-platform
+    newTag: ci
+patches:
+  - target: { kind: Deployment, name: insight-platform }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: deployment.environment=ci,k8s.namespace.name=insight

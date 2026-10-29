@@ -1,0 +1,15 @@
+# The single-node lab cluster: Cilium Gateway, image loaded straight onto the node.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - httproute.yaml
+images:
+  - name: ai-insight-platform
+    newTag: 0.1.0  # bump after deploy/build-image.sh <version>, then deploy/publish-gitops.sh
+patches:
+  - target: { kind: Deployment, name: insight-platform }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: deployment.environment=lab,k8s.namespace.name=insight

@@ -126,13 +126,29 @@ Recent comparison (10 cases, same schema): Claude Sonnet 5.5 10/10 ($0.084, 31 s
 | JSONL audit log | append-only Postgres table | `AuditLog` |
 | console JSON logs, `/metrics`, OTLP traces (lab: Prometheus, Jaeger, Grafana) | Azure Monitor / Grafana | `telemetry.py`, `server.py` |
 
+## Continuous integration (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to main.
+
+| Job | What it proves | Runs on |
+|---|---|---|
+| `test` | unit tests on the SQLite stand-in: engine, policy, validator, writers | every run |
+| `manifests` | every overlay renders and validates against Kubernetes and CRD schemas (kubeconform) | every run |
+| `databricks` | every metric's Databricks SQL gives the SQLite answers, on the real warehouse | pull requests from this repository only |
+| `kind` | the image builds and has no fixable critical or high CVEs (Trivy); on a kind cluster with the lab's chart versions of kube-prometheus-stack and Jaeger, the app serves validated summaries, Prometheus scrapes it and loads its alert rules, Jaeger receives its traces, Grafana loads its dashboard | every run |
+
+- **Databricks access without secrets:** the job signs in to Entra as the `governed-ai-insights-ci` app through a federated credential that trusts only `repo:klahisaac/governed-ai-insights:pull_request`. That service principal holds no Azure role, only `CAN_USE` on the SQL warehouse and `USE CATALOG`, `USE SCHEMA` and `SELECT` on the schema. The workspace settings are repository variables, not secrets. A fork's pull request gets no token, so the job is skipped there.
+- **Same artifacts as the cluster:** manifests live in `deploy/base` with one overlay per environment (`lab`, `ci`; `staging` and `production` come with AKS). Overlays change values only (image tag, environment name, routes). Monitoring chart versions are pinned once in `deploy/platform/charts.env`.
+- **What kind cannot show:** Entra workload identity, Key Vault, the Azure gateway and DNS, and the app reaching Databricks from inside a cluster. That is the job of a staging environment on AKS, which is not built yet.
+- `deploy/smoke-test.sh` is the same check for any cluster running an overlay.
+
 ## Deploying to a Kubernetes lab cluster (Argo CD, Prometheus, Jaeger, Grafana)
 
 `deploy/` puts the app on a lab cluster (single node `xklaus03x`, Cilium Gateway, kube-prometheus-stack, Jaeger, Argo CD, Gitea).
 
 ```
 deploy/build-image.sh ──▶ node containerd      (no Docker, so Kaniko builds it inside the cluster)
-deploy/k8s/ ──publish-gitops.sh──▶ Gitea gitea_admin/insight-gitops ──▶ Argo CD (insight-platform app, auto sync)
+deploy/overlays/lab ──publish-gitops.sh──▶ Gitea gitea_admin/insight-gitops ──▶ Argo CD (insight-platform app, auto sync)
                                                                           │
    insight namespace: Deployment, Service, PVC, HTTPRoute, ServiceMonitor, PrometheusRule, dashboard ConfigMap
    monitoring namespace: Jaeger data source for Grafana
@@ -140,7 +156,7 @@ deploy/k8s/ ──publish-gitops.sh──▶ Gitea gitea_admin/insight-gitops �
 
 ```bash
 deploy/build-image.sh 0.1.1                          # build the image and load it onto the node
-# set newTag in deploy/k8s/kustomization.yaml to 0.1.1, then
+# set newTag in deploy/overlays/lab/kustomization.yaml to 0.1.1, then
 deploy/publish-gitops.sh "bump image to 0.1.1"      # commit to Gitea; Argo CD syncs
 kubectl apply -f deploy/argocd/application.yaml     # once
 ```
@@ -170,6 +186,6 @@ kubectl apply -f deploy/argocd/application.yaml     # once
 - **No complementary suppression across regions:** subtracting the other regions from the national value can reveal a hidden region's value.
 - **Document selection is a metadata filter.** There is no relevance search for the question yet (embeddings, vector index). Document dates must be ISO dates to be validated.
 - The LLM summary cache is in memory only, so after a restart the same insight id can get different sentences.
-- A metric definition approval flow and a version comparison page are next. Deployment reaches the lab cluster (Argo CD); AKS and an image registry are not done yet.
+- A metric definition approval flow and a version comparison page are next. Deployment reaches the lab cluster (Argo CD) and pull request CI runs on kind; AKS (staging and production), an image registry and the release and promotion workflows are not done yet.
 - The validator's wording checks are word lists, so they cannot catch every paraphrase. That is why the evaluation gate and scoring of production samples are needed as well.
 - LLM output varies from run to run. The same prompt can pass the evaluation gate one time and fail the next, so a real gate should run each case several times and judge by pass rate.
