@@ -1,0 +1,116 @@
+# Pull request checks. Databricks runs only for pull requests from this repository: a fork's
+# pull request gets no Azure token, so that job is skipped there.
+#
+#   test        unit tests on the SQLite stand-in (free, offline)
+#   manifests   render every overlay and validate it against Kubernetes and CRD schemas
+#   databricks  every metric's Databricks SQL gives the SQLite answers (read-only identity)
+#   kind        build and scan the image, run it on the monitoring charts the lab runs, smoke test
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin kubeconform
+      - name: Validate overlays
+        run: |
+          for overlay in deploy/overlays/*/; do
+            echo "::group::$overlay"
+            kubectl kustomize "$overlay" | kubeconform -strict -summary \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+            echo "::endgroup::"
+          done
+          kubeconform -strict -summary deploy/platform/grafana-datasource-jaeger.yaml
+
+  databricks:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # OIDC token for the Entra app's federated credential
+    env:
+      INSIGHT_DATABRICKS_TESTS: "1"
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_WAREHOUSE_ID: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
+      DATABRICKS_CATALOG: ${{ vars.DATABRICKS_CATALOG }}
+      DATABRICKS_SCHEMA: ${{ vars.DATABRICKS_SCHEMA }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      # The service principal has no Azure role, only Databricks grants, hence no subscription.
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - run: python -m unittest tests.test_databricks -v
+
+  kind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Build the image
+        run: docker build --build-arg VERSION=${{ github.sha }} -t ai-insight-platform:ci .
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ai-insight-platform:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa  # v1.15.1
+        with:
+          cluster_name: ci
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+      - name: Install the monitoring platform (chart versions from deploy/platform/charts.env)
+        run: |
+          source deploy/platform/charts.env
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
+          helm install jaeger jaegertracing/jaeger --version "$JAEGER_CHART_VERSION" \
+            -n observability --create-namespace --wait --timeout 5m
+          helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+            --version "$KUBE_PROMETHEUS_STACK_VERSION" -n monitoring --create-namespace \
+            -f deploy/platform/ci/kube-prometheus-stack.values.yaml --wait --timeout 10m
+          kubectl apply -f deploy/platform/grafana-datasource-jaeger.yaml
+      - name: Deploy the app
+        run: |
+          kind load docker-image ai-insight-platform:ci --name ci
+          kubectl apply -k deploy/overlays/ci
+          kubectl rollout status deployment/insight-platform -n insight --timeout 5m
+      - run: deploy/smoke-test.sh
+      - name: Show cluster state
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl describe deployment insight-platform -n insight
+          kubectl logs -n insight deployment/insight-platform --all-containers --tail 100

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Copy deploy/k8s into the GitOps repo in the lab Gitea; Argo CD syncs it from there.
-# The app repo stays the source; the GitOps repo only ever holds rendered-from-here config.
+# Render the lab overlay (and the Grafana data source the lab platform needs) into the GitOps
+# repo in the lab Gitea; Argo CD syncs it from there. The app repo stays the source; the
+# GitOps repo only ever holds config rendered from here.
 #
 #   deploy/publish-gitops.sh "bump image to 0.1.1"
 set -euo pipefail
@@ -15,7 +16,8 @@ git clone -q "http://gitea_admin:$PASSWORD@$GITEA:3000/gitea_admin/insight-gitop
 cd "$WORK/repo"
 git checkout -q -B main
 rm -rf apps/insight-platform && mkdir -p apps/insight-platform
-cp "$ROOT"/deploy/k8s/* apps/insight-platform/
+{ kubectl kustomize "$ROOT/deploy/overlays/lab"; echo ---; cat "$ROOT/deploy/platform/grafana-datasource-jaeger.yaml"; } \
+  > apps/insight-platform/manifests.yaml
 git add -A
 if git diff --cached --quiet; then
   echo "nothing to publish"

@@ -9,7 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# pip is only needed to build the image; removing it also removes the libraries it vendors
+# (urllib3, msgpack), which the app never imports but an image scan rightly reports.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y pip \
+    && rm -rf /usr/local/lib/python3.13/ensurepip
 
 COPY insight ./insight
 COPY web ./web

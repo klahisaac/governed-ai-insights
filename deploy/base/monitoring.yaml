@@ -56,24 +56,3 @@ spec:
           labels: { severity: warning }
           annotations:
             summary: Summary writers spent more than $2 in the last hour.
----
-# Grafana reads data sources only from its own namespace.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-datasource-jaeger
-  namespace: monitoring
-  labels:
-    grafana_datasource: "1"
-data:
-  jaeger.yaml: |
-    apiVersion: 1
-    datasources:
-      - name: Jaeger
-        type: jaeger
-        uid: jaeger
-        url: http://jaeger.observability.svc:16686
-        access: proxy
-        jsonData:
-          tracesToMetrics:
-            datasourceUid: prometheus

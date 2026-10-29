@@ -35,7 +35,9 @@ class DatabricksParityTest(unittest.TestCase):
         cls.temporary_directory.cleanup()
 
     def test_same_snapshot(self) -> None:
-        self.assertEqual(self.local.snapshot(), self.remote.snapshot())
+        self.assertEqual(self.local.snapshot(), self.remote.snapshot(),
+                         "Databricks holds different data from the synthetic warehouse (seed 7); "
+                         "reload it with python3 -m insight.domains.pharmaceutical.to_databricks")
 
     def test_metrics_match(self) -> None:
         for metric in self.domain.metrics.values():

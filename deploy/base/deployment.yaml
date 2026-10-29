@@ -47,7 +47,8 @@ spec:
           env:
             - { name: OTEL_SERVICE_NAME, value: insight-platform }
             - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://jaeger.observability.svc:4318" }
-            - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment=lab,k8s.namespace.name=insight" }
+            # Each overlay sets deployment.environment (lab, ci, staging, production).
+            - { name: OTEL_RESOURCE_ATTRIBUTES, value: "k8s.namespace.name=insight" }
           envFrom:
             # ANTHROPIC_API_KEY turns on the Claude writer. Created by hand, never stored in git.
             - secretRef:

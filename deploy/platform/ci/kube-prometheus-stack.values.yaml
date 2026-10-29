@@ -1,0 +1,17 @@
+# kind in CI: the same chart and selectors as the lab, without the parts a smoke test does not
+# need (Alertmanager, node and control plane scraping), so it fits on a GitHub runner.
+fullnameOverride: kps
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+prometheus:
+  prometheusSpec:
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    scrapeInterval: 15s
+    evaluationInterval: 15s
