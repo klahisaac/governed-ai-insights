@@ -737,6 +737,11 @@ async function signIn(token) {
   applyViews();
   const catalog = await api("/api/catalog");
   state.policy = catalog.policy;
+  if (catalog.public) {
+    const badge = byId("prototype-badge");
+    badge.textContent = "Public prototype · synthetic data · fictional brand";
+    badge.title = "Anyone can sign in as any role here, so model-backed summary writers, evaluation runs and policy changes are off.";
+  }
   state.metricTitles = Object.fromEntries(catalog.metrics.map((metric) => [metric.name, metric.title]));
   state.regionNames = Object.fromEntries(catalog.scope_members.map((member) => [member.code, member.name]));
   renderPolicy(catalog.policy);

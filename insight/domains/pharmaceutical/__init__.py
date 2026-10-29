@@ -30,13 +30,14 @@ def _regions(warehouse: Warehouse) -> list[dict[str, str]]:
     return warehouse.query("SELECT code, name FROM regions ORDER BY code", {})
 
 
-def load() -> Domain:
+def load(model_writers: bool = True) -> Domain:
+    """model_writers=False leaves out every writer that calls a paid model, whatever is configured."""
     # Display order: the launch headline first.
     metrics = [Metric.load(HERE / "metrics" / f"{name}.toml") for name in ("new_to_brand_patients", "eight_week_persistence")]
     narrators = [TemplateNarrator()]
-    if claude := ClaudeAPI.from_environment():  # only when ANTHROPIC_API_KEY is set
+    if model_writers and (claude := ClaudeAPI.from_environment()):  # only when ANTHROPIC_API_KEY is set
         narrators.append(ClaudeAPINarrator(claude))
-    if foundry := FoundryChat.from_environment():  # only when a Foundry deployment is configured
+    if model_writers and (foundry := FoundryChat.from_environment()):  # only when a Foundry deployment is configured
         narrators.append(FoundryNarrator(foundry))
     narrators.append(SloppyNarrator())
     return Domain(
