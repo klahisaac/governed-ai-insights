@@ -27,6 +27,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,11 +48,20 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 DATA = Path(os.environ.get("INSIGHT_DATA_DIR") or ROOT / "data")
 VERSION = os.environ.get("INSIGHT_VERSION", "dev")
+# A public deployment: anyone can sign in as any role with the prototype tokens, so nothing a
+# visitor does may cost money or change what other visitors see. Model-backed writers, gate runs
+# and policy changes are off; reading, regenerating with the free writers and copying stay on.
+PUBLIC = os.environ.get("INSIGHT_PUBLIC") == "1"
+PUBLIC_WITHHELD_PERMISSIONS = {"evaluation:run", "policy:edit"}
 
 
 class App:
-    def __init__(self, data_dir: Path = DATA):
-        self.domain = telemetry.traced_domain(pharmaceutical.load())
+    def __init__(self, data_dir: Path = DATA, public: bool = PUBLIC):
+        self.public = public
+        domain = pharmaceutical.load(model_writers=not public)
+        if public:
+            domain = replace(domain, policy=domain.policy.without_permissions(PUBLIC_WITHHELD_PERMISSIONS))
+        self.domain = telemetry.traced_domain(domain)
         self.warehouse = telemetry.TracedWarehouse(open_warehouse(data_dir / "warehouse.db"))
         self.audit = AuditLog(data_dir / "audit.jsonl")
         self.evaluations = EvaluationStore(data_dir / "evaluation_runs.jsonl")
@@ -206,6 +216,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     "policy": policy.public(),
                     "scope_members": domain.scope_members(app.warehouse),
                     "warehouse": app.warehouse.dialect,  # sqlite or databricks; smoke tests check it
+                    "public": app.public,
                 }
             if path == "/api/audit":
                 if not policy.can(user, "audit:read"):

@@ -1,0 +1,35 @@
+# insight.isaacon.dev through the AKS app routing NGINX (deploy/azure/provision.sh). Cloudflare
+# proxies the name to the controller's public IP (deploy/cloudflare).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: insight-platform
+  namespace: insight
+spec:
+  ingressClassName: webapprouting.kubernetes.azure.com
+  rules:
+    - host: insight.isaacon.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: insight-platform, port: { name: http } } }
+---
+# /metrics is for Prometheus inside the cluster only. The redirect annotation applies to a whole
+# Ingress, hence its own; NGINX picks the longest matching path, so this wins over /.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: insight-platform-metrics
+  namespace: insight
+  annotations:
+    nginx.ingress.kubernetes.io/temporal-redirect: https://insight.isaacon.dev/
+spec:
+  ingressClassName: webapprouting.kubernetes.azure.com
+  rules:
+    - host: insight.isaacon.dev
+      http:
+        paths:
+          - path: /metrics
+            pathType: Prefix
+            backend: { service: { name: insight-platform, port: { name: http } } }

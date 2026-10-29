@@ -94,6 +94,14 @@ class Policy:
     def audience(self, user: User) -> str:
         return self.roles[user.role]["audience"]
 
+    def without_permissions(self, permissions: set[str]) -> Policy:
+        """The same rules with `permissions` taken from every role, for example on a public
+        deployment where anyone can sign in as any role. What readers see does not change, so
+        the version (and every insight id) stays the same."""
+        roles = {role: {**rules, "permissions": [p for p in rules.get("permissions", []) if p not in permissions]}
+                 for role, rules in self.roles.items()}
+        return replace(self, roles=roles)
+
     def can(self, user: User, permission: str) -> bool:
         return permission in self.roles[user.role].get("permissions", [])
 
