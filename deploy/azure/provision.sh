@@ -8,6 +8,8 @@
 #                        cluster's service account insight/insight-platform (Databricks grants follow)
 #   deploy identities    one per environment for GitHub Actions, federated with the repository's
 #                        GitHub environment of the same name (no secrets)
+#   app routing          production only: the managed NGINX ingress (one replica), whose public
+#                        IP deploy/cloudflare points insight.isaacon.dev at
 #
 # The GitHub subjects use the repository's immutable ids (GitHub issues them that way), so a
 # deleted and recreated repository needs this script run again.
@@ -56,9 +58,19 @@ for environment in "${ENVIRONMENTS[@]}"; do
       --attach-acr "$REGISTRY_ID" --auto-upgrade-channel patch \
       --no-ssh-key --tags "environment=$environment" -o none
   fi
+  if [ "$environment" = production ] &&
+     [ "$(az aks show -g "$GROUP" -n "$cluster" --query ingressProfile.webAppRouting.enabled -o tsv)" != true ]; then
+    az aks approuting enable -g "$GROUP" -n "$cluster" -o none
+  fi
   cluster_id=$(az aks show -g "$GROUP" -n "$cluster" --query id -o tsv)
   issuer=$(az aks show -g "$GROUP" -n "$cluster" --query oidcIssuerProfile.issuerUrl -o tsv)
   grant "$ME" "Azure Kubernetes Service RBAC Cluster Admin" "$cluster_id" User
+  if [ "$environment" = production ]; then
+    # The controller asks 500m a pod and the one node has room for one, not the default two.
+    az aks get-credentials -g "$GROUP" -n "$cluster" --overwrite-existing -o none
+    kubelogin convert-kubeconfig -l azurecli
+    kubectl patch nginxingresscontroller default --type merge -p '{"spec":{"scaling":{"minReplicas":1}}}'
+  fi
 
   app=id-governed-ai-insights-app-$environment
   az identity create -g "$GROUP" -n "$app" -l "$LOCATION" -o none
