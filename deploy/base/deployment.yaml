@@ -19,6 +19,7 @@ spec:
     metadata:
       labels: *labels
     spec:
+      serviceAccountName: insight-platform
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

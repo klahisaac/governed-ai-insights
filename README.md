@@ -135,12 +135,27 @@ Recent comparison (10 cases, same schema): Claude Sonnet 5.5 10/10 ($0.084, 31 s
 | `test` | unit tests on the SQLite stand-in: engine, policy, validator, writers | every run |
 | `manifests` | every overlay renders and validates against Kubernetes and CRD schemas (kubeconform) | every run |
 | `databricks` | every metric's Databricks SQL gives the SQLite answers, on the real warehouse | pull requests from this repository only |
-| `kind` | the image builds and has no fixable critical or high CVEs (Trivy); on a kind cluster with the lab's chart versions of kube-prometheus-stack and Jaeger, the app serves validated summaries, Prometheus scrapes it and loads its alert rules, Jaeger receives its traces, Grafana loads its dashboard | every run |
+| `kind` | the image builds and has no fixable critical or high CVEs (Trivy); deployed by `deploy/deploy.sh` (the script staging and production use) on a kind cluster with the pinned chart versions of kube-prometheus-stack and Jaeger, the app serves validated summaries, Prometheus scrapes it and loads its alert rules, Jaeger receives its traces, Grafana loads its dashboard | every run |
 
 - **Databricks access without secrets:** the job signs in to Entra as the `governed-ai-insights-ci` app through a federated credential that trusts only `repo:klahisaac@254795426/governed-ai-insights@1438633210:pull_request`. GitHub puts the owner and repository ids in the token subject, so a deleted and recreated repository with the same name does not inherit the trust (recreating it means updating this subject). That service principal holds no Azure role, only `CAN_USE` on the SQL warehouse and `USE CATALOG`, `USE SCHEMA` and `SELECT` on the schema. The workspace settings are repository variables, not secrets. A fork's pull request gets no token, so the job is skipped there.
-- **Same artifacts as the cluster:** manifests live in `deploy/base` with one overlay per environment (`lab`, `ci`; `staging` and `production` come with AKS). Overlays change values only (image tag, environment name, routes). Monitoring chart versions are pinned once in `deploy/platform/charts.env`.
-- **What kind cannot show:** Entra workload identity, Key Vault, the Azure gateway and DNS, and the app reaching Databricks from inside a cluster. That is the job of a staging environment on AKS, which is not built yet.
+- **Same artifacts as the clusters:** manifests live in `deploy/base` with one overlay per environment (`lab`, `ci`, `staging`, `production`). Overlays change values only (image, environment name, identity, schema, routes); what every AKS environment shares is the `deploy/components/aks` component. Monitoring chart versions are pinned once in `deploy/platform/charts.env`, and `deploy/deploy.sh` installs them the same way everywhere except the lab.
+- **What kind cannot show:** Workload Identity, the AKS network and storage, and the app reaching Databricks from inside a cluster. Staging on AKS checks those.
 - `deploy/smoke-test.sh` is the same check for any cluster running an overlay.
+
+## Staging and production on AKS
+
+```
+push to main ──▶ ci ──passes──▶ release: build once, push to ACR, deploy.sh staging <digest>,
+                                         smoke test (app reads Databricks), tag staged-<commit>
+gh workflow run promote -f commit=<sha> ──▶ approval ──▶ deploy.sh production <same digest>, smoke test
+```
+
+- **Two clusters** (`aks-governed-ai-insights-staging`, `-production`), one `Standard_D2s_v4` node each, each with its own kube-prometheus-stack and Jaeger from the pinned charts. Entra sign-in with Azure RBAC, no local accounts. One registry (`acrgovernedaiinsights`): staging pushes, production pulls. `deploy/azure/provision.sh` creates all of it and can be run again.
+- **The app reads Databricks with no secret.** Each environment has a user-assigned managed identity, federated with that cluster's service account `insight/insight-platform` (Workload Identity). The app exchanges the projected service account token for an Entra token (`insight/core/azure_credentials.py`). In Databricks the identity holds `CAN_USE` on the SQL warehouse and `USE SCHEMA`, `SELECT` on its own schema only (`pharmaceutical_staging`, `pharmaceutical_production`). Pull request CI reads `pharmaceutical_demo`.
+- **GitHub deploys with no secret either.** Each GitHub environment (`staging`, `production`) has a deploy identity federated with that environment only. It can sign in to its own cluster and nothing else; staging may push to the registry, production may only pull. The production environment needs an approval and accepts runs from main only.
+- **The same image all the way:** release builds once and deploys by digest. Only a digest that passed the staging smoke test is tagged `staged-<commit>`, and promote deploys that digest, so production runs the bytes staging tested.
+- **Not reachable from the internet:** the app has no public route; the smoke test reaches it through `kubectl port-forward`. The prototype's sign-in tokens are in this repository, and the admin role can start paid model calls, so a public route needs real sign-in (Entra ID) first. The Claude writer is off on AKS until its key comes from Key Vault.
+- **Cost:** two nodes, two load balancers for outbound traffic and the registry, roughly $150 to $200 a month while the clusters run. `az aks stop` on a cluster stops its node charges.
 
 ## Deploying to a Kubernetes lab cluster (Argo CD, Prometheus, Jaeger, Grafana)
 
@@ -186,6 +201,6 @@ kubectl apply -f deploy/argocd/application.yaml     # once
 - **No complementary suppression across regions:** subtracting the other regions from the national value can reveal a hidden region's value.
 - **Document selection is a metadata filter.** There is no relevance search for the question yet (embeddings, vector index). Document dates must be ISO dates to be validated.
 - The LLM summary cache is in memory only, so after a restart the same insight id can get different sentences.
-- A metric definition approval flow and a version comparison page are next. Deployment reaches the lab cluster (Argo CD) and pull request CI runs on kind; AKS (staging and production), an image registry and the release and promotion workflows are not done yet.
+- A metric definition approval flow and a version comparison page are next. On AKS there is no public route with real sign-in, no Key Vault for the Claude key, and the platform charts are installed by the deploy rather than by Argo CD.
 - The validator's wording checks are word lists, so they cannot catch every paraphrase. That is why the evaluation gate and scoring of production samples are needed as well.
 - LLM output varies from run to run. The same prompt can pass the evaluation gate one time and fail the next, so a real gate should run each case several times and judge by pass rate.

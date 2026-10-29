@@ -1,0 +1,24 @@
+# What every AKS environment shares: the pod signs in as its managed identity through
+# Workload Identity and reads the governed metrics from Databricks. The overlay names the
+# identity (service account annotation) and the schema.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: { kind: Deployment, name: insight-platform }
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: insight-platform, namespace: insight }
+      spec:
+        template:
+          metadata:
+            labels:
+              azure.workload.identity/use: "true"
+          spec:
+            containers:
+              - name: insight
+                env:
+                  - { name: INSIGHT_WAREHOUSE, value: databricks }
+                  - { name: DATABRICKS_HOST, value: "https://adb-7405604521901022.2.azuredatabricks.net" }
+                  - { name: DATABRICKS_WAREHOUSE_ID, value: b2ad2a94330c6637 }
+                  - { name: DATABRICKS_CATALOG, value: dbw_insight_demo_7405604521901022 }

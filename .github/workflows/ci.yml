@@ -4,7 +4,8 @@
 #   test        unit tests on the SQLite stand-in (free, offline)
 #   manifests   render every overlay and validate it against Kubernetes and CRD schemas
 #   databricks  every metric's Databricks SQL gives the SQLite answers (read-only identity)
-#   kind        build and scan the image, run it on the monitoring charts the lab runs, smoke test
+#   kind        build and scan the image, deploy it with deploy/deploy.sh as staging and production
+#               are deployed, smoke test
 name: ci
 
 on:
@@ -91,22 +92,10 @@ jobs:
         with:
           cluster_name: ci
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
-      - name: Install the monitoring platform (chart versions from deploy/platform/charts.env)
-        run: |
-          source deploy/platform/charts.env
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
-          helm install jaeger jaegertracing/jaeger --version "$JAEGER_CHART_VERSION" \
-            -n observability --create-namespace --wait --timeout 5m
-          helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-            --version "$KUBE_PROMETHEUS_STACK_VERSION" -n monitoring --create-namespace \
-            -f deploy/platform/ci/kube-prometheus-stack.values.yaml --wait --timeout 10m
-          kubectl apply -f deploy/platform/grafana-datasource-jaeger.yaml
-      - name: Deploy the app
+      - name: Deploy the monitoring platform and the app (the script staging and production use)
         run: |
           kind load docker-image ai-insight-platform:ci --name ci
-          kubectl apply -k deploy/overlays/ci
-          kubectl rollout status deployment/insight-platform -n insight --timeout 5m
+          deploy/deploy.sh ci ai-insight-platform:ci
       - run: deploy/smoke-test.sh
       - name: Show cluster state
         if: failure()

@@ -1,0 +1,8 @@
+# Every cluster: release name kube-prometheus-stack, objects named kps-*, and Prometheus picks up
+# ServiceMonitors and PodMonitors from every namespace (the app's PrometheusRule carries the
+# release label the rule selector wants). The lab cluster uses the same settings, plus its own URLs.
+fullnameOverride: kps
+prometheus:
+  prometheusSpec:
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false

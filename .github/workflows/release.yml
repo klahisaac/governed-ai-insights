@@ -1,0 +1,72 @@
+# After ci passes on main: build the image once, push it, deploy it to the staging AKS cluster,
+# and run the smoke test there, where the app reads Databricks through Workload Identity. A
+# passing smoke test tags the digest staged-<commit>, which is what promote looks for.
+name: release
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write  # OIDC token for the staging deploy identity
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha }}
+      REPOSITORY: ${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build and push the image
+        run: |
+          az acr login -n "${{ vars.ACR_NAME }}"
+          docker build --build-arg VERSION="$COMMIT" -t "$REPOSITORY:$COMMIT" .
+          docker push "$REPOSITORY:$COMMIT"
+          echo "IMAGE=$(docker inspect --format '{{index .RepoDigests 0}}' "$REPOSITORY:$COMMIT")" >> "$GITHUB_ENV"
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+      - uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29  # v1.3
+        with:
+          kubelogin-version: v0.2.21
+      - name: Connect to the staging cluster
+        run: |
+          az aks get-credentials -g "${{ vars.AKS_RESOURCE_GROUP }}" -n "${{ vars.AKS_CLUSTER }}" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+      - run: deploy/deploy.sh staging "$IMAGE"
+      - run: deploy/smoke-test.sh
+        env:
+          SMOKE_WAREHOUSE: databricks
+      - name: Mark the digest as staged
+        run: |
+          # Same manifest, so the same digest; AcrPush is enough (an import would need more).
+          docker tag "$REPOSITORY:$COMMIT" "$REPOSITORY:staged-$COMMIT"
+          docker push "$REPOSITORY:staged-$COMMIT"
+          {
+            echo "Staging runs \`$IMAGE\` (commit $COMMIT)."
+            echo
+            echo "Promote it: \`gh workflow run promote -f commit=$COMMIT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Show cluster state
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl describe deployment insight-platform -n insight
+          kubectl logs -n insight deployment/insight-platform --all-containers --tail 100
