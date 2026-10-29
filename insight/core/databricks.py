@@ -12,7 +12,7 @@ Configuration (environment):
   DATABRICKS_WAREHOUSE_ID  SQL warehouse id
   DATABRICKS_CATALOG       for example my_workspace_catalog
   DATABRICKS_SCHEMA        for example pharmaceutical
-  DATABRICKS_TOKEN         optional; without it an Azure CLI token is used (az login)
+  DATABRICKS_TOKEN         optional; without it Workload Identity (on AKS) or az login is used
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from insight.core.azure_credentials import AzureCliToken
+from insight.core.azure_credentials import azure_token
 
 # The Azure Databricks first-party application; tokens for it are accepted by every workspace.
 AZURE_DATABRICKS_RESOURCE = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d"
@@ -137,7 +137,7 @@ class DatabricksSQL:
             os.environ["DATABRICKS_WAREHOUSE_ID"],
             os.environ["DATABRICKS_CATALOG"],
             os.environ["DATABRICKS_SCHEMA"],
-            (lambda: static) if static else AzureCliToken(AZURE_DATABRICKS_RESOURCE),
+            (lambda: static) if static else azure_token(AZURE_DATABRICKS_RESOURCE),
         )
 
 

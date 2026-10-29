@@ -3,7 +3,8 @@
 # the app answers and writes a validated summary, Prometheus scrapes it and loaded its
 # alert rules, Jaeger received its traces, and Grafana has its dashboard and data source.
 #
-#   deploy/smoke-test.sh            (needs kubectl pointed at the cluster)
+#   deploy/smoke-test.sh                          (needs kubectl pointed at the cluster)
+#   SMOKE_WAREHOUSE=databricks deploy/smoke-test.sh  (also checks which warehouse the app reads)
 set -euo pipefail
 TOKEN=${SMOKE_TOKEN:-prototype-brand-lead}
 PIDS=()
@@ -28,6 +29,12 @@ forward observability jaeger 16686 16686
 forward monitoring kube-prometheus-stack-grafana 13000 80
 
 curl -sf http://localhost:18000/healthz >/dev/null && echo "ok: app is healthy"
+
+if [ -n "${SMOKE_WAREHOUSE:-}" ]; then  # for example databricks on AKS, where the app reads the real warehouse
+  curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:18000/api/catalog \
+    | python3 -c "import json, sys; warehouse = json.load(sys.stdin)['warehouse']; \
+assert warehouse == '$SMOKE_WAREHOUSE', warehouse; print('ok: the app reads from $SMOKE_WAREHOUSE')"
+fi
 
 # A summary from the rule-based writer must pass the validator (no LLM in CI).
 for metric in new_to_brand_patients eight_week_persistence; do

@@ -1,0 +1,35 @@
+# The staging AKS cluster (deploy/azure/provision.sh). deploy/deploy.sh sets the image to the
+# registry digest being deployed; the tag below only names the repository.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+components:
+  - ../../components/aks
+images:
+  - name: ai-insight-platform
+    newName: acrgovernedaiinsights.azurecr.io/ai-insight-platform
+    newTag: set-by-deploy
+patches:
+  - target: { kind: ServiceAccount, name: insight-platform }
+    patch: |
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: insight-platform
+        namespace: insight
+        annotations:
+          azure.workload.identity/client-id: 56a4aa21-4e4b-4e7a-a8e3-099e81bce04c  # id-governed-ai-insights-app-staging
+  - target: { kind: Deployment, name: insight-platform }
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: insight-platform, namespace: insight }
+      spec:
+        template:
+          spec:
+            containers:
+              - name: insight
+                env:
+                  - { name: DATABRICKS_SCHEMA, value: pharmaceutical_staging }
+                  - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment=staging,k8s.namespace.name=insight" }

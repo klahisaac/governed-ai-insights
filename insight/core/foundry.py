@@ -22,7 +22,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from insight.core.azure_credentials import AzureCliToken
+from insight.core.azure_credentials import azure_token
 from insight.core.llm import LLMError, LLMResult
 
 COGNITIVE_SERVICES_RESOURCE = "https://cognitiveservices.azure.com"
@@ -100,7 +100,7 @@ class FoundryChat:
         return cls(
             os.environ["FOUNDRY_ENDPOINT"],
             os.environ.get("FOUNDRY_DEPLOYMENT", "gpt-5-mini"),
-            AzureCliToken(COGNITIVE_SERVICES_RESOURCE),
+            azure_token(COGNITIVE_SERVICES_RESOURCE),
             float(os.environ.get("FOUNDRY_INPUT_PRICE_PER_MILLION", "0")),
             float(os.environ.get("FOUNDRY_OUTPUT_PRICE_PER_MILLION", "0")),
         )

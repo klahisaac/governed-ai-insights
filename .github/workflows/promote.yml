@@ -1,0 +1,62 @@
+# Put a commit that passed staging into production. Only a digest that staging tagged
+# staged-<commit> can be promoted, and it is deployed by digest, so production runs the exact
+# image staging tested. The production environment requires an approval before the job starts.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full commit sha on main whose staging release passed
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write  # OIDC token for the production deploy identity
+    env:
+      COMMIT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Find the digest staging tested
+        run: |
+          az acr login -n "${{ vars.ACR_NAME }}"
+          digest=$(docker buildx imagetools inspect "${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform:staged-$COMMIT" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"') || { echo "::error::commit $COMMIT has not passed staging"; exit 1; }
+          echo "IMAGE=${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform@$digest" >> "$GITHUB_ENV"
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+      - uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29  # v1.3
+        with:
+          kubelogin-version: v0.2.21
+      - name: Connect to the production cluster
+        run: |
+          az aks get-credentials -g "${{ vars.AKS_RESOURCE_GROUP }}" -n "${{ vars.AKS_CLUSTER }}" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+      - run: deploy/deploy.sh production "$IMAGE"
+      - run: deploy/smoke-test.sh
+        env:
+          SMOKE_WAREHOUSE: databricks
+      - run: echo "Production runs \`$IMAGE\` (commit $COMMIT)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Show cluster state
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl describe deployment insight-platform -n insight
+          kubectl logs -n insight deployment/insight-platform --all-containers --tail 100

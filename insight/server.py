@@ -205,6 +205,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     "scope_dimension": policy.scope_dimension,
                     "policy": policy.public(),
                     "scope_members": domain.scope_members(app.warehouse),
+                    "warehouse": app.warehouse.dialect,  # sqlite or databricks; smoke tests check it
                 }
             if path == "/api/audit":
                 if not policy.can(user, "audit:read"):
