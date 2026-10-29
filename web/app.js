@@ -769,4 +769,9 @@ async function main() {
   await signIn(logins[0].token);
 }
 
-main();
+main().then(
+  () => byId("loading").remove(),
+  (error) => {
+    byId("loading").classList.add("failed");
+    byId("loading-message").textContent = `Could not load the page: ${error.message}. Reload to try again.`;
+  });
