@@ -1,0 +1,5 @@
+# Only the container needs these; the app itself runs on the standard library.
+anthropic==2.3.0
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-threading==0.66b1

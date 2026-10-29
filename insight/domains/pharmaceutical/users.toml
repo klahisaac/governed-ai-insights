@@ -1,0 +1,28 @@
+# Prototype identities only. In production the PrototypeIdentityProvider is replaced by
+# Entra ID (OIDC); its app roles map onto the same role names as policy.toml.
+
+[[users]]
+token = "prototype-brand-lead"
+id = "user-brand-lead"
+name = "Avery (Brand lead)"
+role = "brand_lead"
+
+[[users]]
+token = "prototype-regional-sales-director-northeast"
+id = "user-regional-sales-director-northeast"
+name = "Jordan (Regional sales director, Northeast)"
+role = "regional_sales_director"
+scope_value = "NE"
+
+[[users]]
+token = "prototype-regional-sales-director-southeast"
+id = "user-regional-sales-director-southeast"
+name = "Riley (Regional sales director, Southeast)"
+role = "regional_sales_director"
+scope_value = "SE"
+
+[[users]]
+token = "prototype-administrator"
+id = "user-administrator"
+name = "Sam (Platform administrator)"
+role = "administrator"

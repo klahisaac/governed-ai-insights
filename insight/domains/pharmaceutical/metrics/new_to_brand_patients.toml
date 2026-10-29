@@ -1,0 +1,90 @@
+# Governed metric definition.
+# Owner (at Celldex): Director of Commercial Data Science. Changes go through review;
+# bump `version` whenever the logic or a parameter changes.
+
+name = "new_to_brand_patients"
+version = "1.2.0"
+title = "New-to-brand patients, weekly"
+owner = "Director, Commercial Data Science"
+approved_on = "2026-10-01"
+description = """
+Distinct patients whose Zelvora fill in the week is their first, or their first
+after a gap longer than the lookback window. A new patient counts as a switch when
+they filled a competing advanced therapy in the switch window before that fill;
+otherwise they are new to advanced therapy (naive). Weeks run Monday to Sunday.
+"""
+
+# What COUNT(DISTINCT ...) counts, and the dimensions a query may group or filter by.
+entity = "patient_id"
+dimensions = ["week", "region", "source_of_business"]
+
+measure = "count"
+breakdowns = ["source_of_business"]
+stack_by = "source_of_business"
+week_label = "Week"
+
+# The newest weeks are still receiving claims and are marked provisional.
+provisional_weeks = 2
+provisional_reason = "claims still arriving"
+
+# One row per new-to-brand event, once per warehouse dialect. The engine wraps
+# this; it never edits it. tests/test_databricks.py holds both to the same answers.
+[event_sql]
+sqlite = """
+WITH brand_fills AS (
+  SELECT fill.patient_id, fill.fill_date, prescriber.region,
+         LAG(fill.fill_date) OVER (PARTITION BY fill.patient_id ORDER BY fill.fill_date) AS previous_fill_date
+  FROM fills fill
+  JOIN prescribers prescriber ON prescriber.prescriber_id = fill.prescriber_id
+  WHERE fill.product = :brand
+)
+SELECT
+  brand_fill.patient_id,
+  brand_fill.region,
+  date(brand_fill.fill_date, '-' || ((CAST(strftime('%w', brand_fill.fill_date) AS INTEGER) + 6) % 7) || ' days') AS week,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM fills competitor_fill
+    WHERE competitor_fill.patient_id = brand_fill.patient_id
+      AND instr(',' || :competitors || ',', ',' || competitor_fill.product || ',') > 0
+      AND julianday(brand_fill.fill_date) - julianday(competitor_fill.fill_date) BETWEEN 0 AND :switch_window_days
+  ) THEN 'switch' ELSE 'naive' END AS source_of_business
+FROM brand_fills brand_fill
+WHERE brand_fill.previous_fill_date IS NULL
+   OR julianday(brand_fill.fill_date) - julianday(brand_fill.previous_fill_date) > :lookback_days
+"""
+
+databricks = """
+WITH brand_fills AS (
+  SELECT fill.patient_id, fill.fill_date, prescriber.region,
+         LAG(fill.fill_date) OVER (PARTITION BY fill.patient_id ORDER BY fill.fill_date) AS previous_fill_date
+  FROM fills fill
+  JOIN prescribers prescriber ON prescriber.prescriber_id = fill.prescriber_id
+  WHERE fill.product = :brand
+),
+starts AS (
+  SELECT patient_id, fill_date, region
+  FROM brand_fills
+  WHERE previous_fill_date IS NULL OR datediff(fill_date, previous_fill_date) > :lookback_days
+),
+switched_starts AS (
+  SELECT DISTINCT start.patient_id, start.fill_date
+  FROM starts start
+  JOIN fills competitor_fill ON competitor_fill.patient_id = start.patient_id
+  WHERE array_contains(split(:competitors, ','), competitor_fill.product)
+    AND datediff(start.fill_date, competitor_fill.fill_date) BETWEEN 0 AND :switch_window_days
+)
+SELECT
+  start.patient_id,
+  start.region,
+  CAST(date_trunc('WEEK', start.fill_date) AS DATE) AS week,
+  CASE WHEN switched.patient_id IS NULL THEN 'naive' ELSE 'switch' END AS source_of_business
+FROM starts start
+LEFT JOIN switched_starts switched
+  ON switched.patient_id = start.patient_id AND switched.fill_date = start.fill_date
+"""
+
+[parameters]
+brand = "zelvora"
+competitors = "omalizumab,dupilumab,remibrutinib"
+lookback_days = 365
+switch_window_days = 90

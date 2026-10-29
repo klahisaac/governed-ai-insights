@@ -1,0 +1,115 @@
+# Governed metric definition.
+# Owner (at Celldex): Director of Commercial Data Science. Changes go through review;
+# bump `version` whenever the logic or a parameter changes.
+
+name = "eight_week_persistence"
+version = "1.0.0"
+title = "Patients still on therapy at 8 weeks, by start week"
+owner = "Director, Commercial Data Science"
+approved_on = "2026-10-15"
+description = """
+Of the new-to-brand patients who started Zelvora in a week, the share with another
+Zelvora fill 56 to 84 days after their first fill. Starts use the same rules as
+new-to-brand patients. A start week is measured only once every patient in it has
+been observed through day 84 and those claims have arrived.
+"""
+
+entity = "patient_id"
+dimensions = ["week", "region", "source_of_business"]
+
+measure = "rate"
+numerator = "persistent"
+breakdowns = ["source_of_business"]
+week_label = "Start week"
+
+# A start week needs 6 days (the last start) + 84 days (the window) + 14 days
+# (claims lag) = 104 days before the snapshot; with 26 weeks of data that leaves
+# the newest 14 start weeks unmeasured.
+provisional_weeks = 14
+provisional_reason = "start week not yet followed for 84 days"
+
+# One row per new-to-brand start, once per warehouse dialect. The engine wraps
+# this; it never edits it. tests/test_databricks.py holds both to the same answers.
+[event_sql]
+sqlite = """
+WITH brand_fills AS (
+  SELECT fill.patient_id, fill.fill_date, prescriber.region,
+         LAG(fill.fill_date) OVER (PARTITION BY fill.patient_id ORDER BY fill.fill_date) AS previous_fill_date
+  FROM fills fill
+  JOIN prescribers prescriber ON prescriber.prescriber_id = fill.prescriber_id
+  WHERE fill.product = :brand
+),
+starts AS (
+  SELECT patient_id, fill_date, region
+  FROM brand_fills
+  WHERE previous_fill_date IS NULL
+     OR julianday(fill_date) - julianday(previous_fill_date) > :lookback_days
+)
+SELECT
+  start.patient_id,
+  start.region,
+  date(start.fill_date, '-' || ((CAST(strftime('%w', start.fill_date) AS INTEGER) + 6) % 7) || ' days') AS week,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM fills competitor_fill
+    WHERE competitor_fill.patient_id = start.patient_id
+      AND instr(',' || :competitors || ',', ',' || competitor_fill.product || ',') > 0
+      AND julianday(start.fill_date) - julianday(competitor_fill.fill_date) BETWEEN 0 AND :switch_window_days
+  ) THEN 'switch' ELSE 'naive' END AS source_of_business,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM fills later_fill
+    WHERE later_fill.patient_id = start.patient_id
+      AND later_fill.product = :brand
+      AND julianday(later_fill.fill_date) - julianday(start.fill_date)
+          BETWEEN :persistence_window_start_day AND :persistence_window_end_day
+  ) THEN 1 ELSE 0 END AS persistent
+FROM starts start
+"""
+
+databricks = """
+WITH brand_fills AS (
+  SELECT fill.patient_id, fill.fill_date, prescriber.region,
+         LAG(fill.fill_date) OVER (PARTITION BY fill.patient_id ORDER BY fill.fill_date) AS previous_fill_date
+  FROM fills fill
+  JOIN prescribers prescriber ON prescriber.prescriber_id = fill.prescriber_id
+  WHERE fill.product = :brand
+),
+starts AS (
+  SELECT patient_id, fill_date, region
+  FROM brand_fills
+  WHERE previous_fill_date IS NULL OR datediff(fill_date, previous_fill_date) > :lookback_days
+),
+switched_starts AS (
+  SELECT DISTINCT start.patient_id, start.fill_date
+  FROM starts start
+  JOIN fills competitor_fill ON competitor_fill.patient_id = start.patient_id
+  WHERE array_contains(split(:competitors, ','), competitor_fill.product)
+    AND datediff(start.fill_date, competitor_fill.fill_date) BETWEEN 0 AND :switch_window_days
+),
+persistent_starts AS (
+  SELECT DISTINCT start.patient_id, start.fill_date
+  FROM starts start
+  JOIN fills later_fill ON later_fill.patient_id = start.patient_id
+  WHERE later_fill.product = :brand
+    AND datediff(later_fill.fill_date, start.fill_date)
+        BETWEEN :persistence_window_start_day AND :persistence_window_end_day
+)
+SELECT
+  start.patient_id,
+  start.region,
+  CAST(date_trunc('WEEK', start.fill_date) AS DATE) AS week,
+  CASE WHEN switched.patient_id IS NULL THEN 'naive' ELSE 'switch' END AS source_of_business,
+  CASE WHEN persisted.patient_id IS NULL THEN 0 ELSE 1 END AS persistent
+FROM starts start
+LEFT JOIN switched_starts switched
+  ON switched.patient_id = start.patient_id AND switched.fill_date = start.fill_date
+LEFT JOIN persistent_starts persisted
+  ON persisted.patient_id = start.patient_id AND persisted.fill_date = start.fill_date
+"""
+
+[parameters]
+brand = "zelvora"
+competitors = "omalizumab,dupilumab,remibrutinib"
+lookback_days = 365
+switch_window_days = 90
+persistence_window_start_day = 56
+persistence_window_end_day = 84

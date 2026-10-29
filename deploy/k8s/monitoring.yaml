@@ -1,0 +1,79 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: insight-platform
+  namespace: insight
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: insight-platform
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: insight-platform
+  namespace: insight
+  labels:
+    release: kube-prometheus-stack  # the Prometheus rule selector
+spec:
+  groups:
+    - name: insight-platform
+      rules:
+        - alert: InsightPlatformDown
+          expr: absent(up{job="insight-platform", namespace="insight"} == 1)
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: The insight platform is not answering Prometheus scrapes.
+        - alert: InsightPlatformHighErrorRate
+          expr: |
+            sum(rate(insight_http_requests_total{namespace="insight", status=~"5.."}[5m]))
+              / clamp_min(sum(rate(insight_http_requests_total{namespace="insight"}[5m])), 1e-9) > 0.05
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: More than 5% of requests fail with a server error.
+        - alert: InsightPlatformSlowRequests
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(insight_http_request_duration_seconds_bucket{namespace="insight", route!="/api/evaluations/run"}[5m]))) > 10
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: p95 request latency is above 10 seconds (summary writers included). Look up slow traces in Jaeger.
+        - alert: InsightNarratorErrors
+          expr: sum by (narrator) (increase(insight_narrator_errors_total{namespace="insight"}[15m])) > 3
+          labels: { severity: warning }
+          annotations:
+            summary: "Summary writer {{ $labels.narrator }} raised errors (model or network); readers see numbers without a summary."
+        - alert: InsightLLMCostHigh
+          expr: sum(increase(insight_llm_cost_usd_total{namespace="insight"}[1h])) > 2
+          labels: { severity: warning }
+          annotations:
+            summary: Summary writers spent more than $2 in the last hour.
+---
+# Grafana reads data sources only from its own namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-jaeger
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  jaeger.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        url: http://jaeger.observability.svc:16686
+        access: proxy
+        jsonData:
+          tracesToMetrics:
+            datasourceUid: prometheus

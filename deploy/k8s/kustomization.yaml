@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - service.yaml
+  - deployment.yaml
+  - monitoring.yaml
+configMapGenerator:
+  - name: insight-platform-dashboard
+    namespace: insight
+    files:
+      - insight-platform.json=grafana-dashboard.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+images:
+  - name: ai-insight-platform
+    newTag: 0.1.0  # bump after deploy/build-image.sh <version>, then deploy/publish-gitops.sh

@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insight-platform
+  namespace: insight
+  labels: &labels
+    app.kubernetes.io/name: insight-platform
+    app.kubernetes.io/part-of: ai-insight-platform
+spec:
+  # One replica: the audit log and evaluation runs are files on a ReadWriteOnce volume,
+  # and summaries are cached in memory.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: insight-platform
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: seed-warehouse
+          image: ai-insight-platform:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "[ -f /data/warehouse.db ] || cp /app/seed/warehouse.db /data/"]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          securityContext: &containerSecurity
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: insight
+          image: ai-insight-platform:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8000 }
+          env:
+            - { name: OTEL_SERVICE_NAME, value: insight-platform }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://jaeger.observability.svc:4318" }
+            - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment=lab,k8s.namespace.name=insight" }
+          envFrom:
+            # ANTHROPIC_API_KEY turns on the Claude writer. Created by hand, never stored in git.
+            - secretRef:
+                name: insight-llm
+                optional: true
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+          securityContext: *containerSecurity
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: insight-data
+        - name: tmp
+          emptyDir: {}

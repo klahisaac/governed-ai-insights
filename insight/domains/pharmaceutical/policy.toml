@@ -1,0 +1,62 @@
+# Access and output policy for the pharmaceutical domain pack.
+# Rule content is owned by the business (Director, Medical, Compliance);
+# the platform engineer owns the engine that enforces it everywhere.
+
+version = "2026.10.5"
+
+# Counts from 1 to minimum_cell_size - 1 are never shown (the small cell rule used
+# for Centers for Medicare & Medicaid Services data).
+minimum_cell_size = 11
+
+# Roles scoped to one member of this dimension only see that member.
+scope_dimension = "region"
+
+# AI output may describe what moved together, never why.
+forbidden_phrases = ["because", "due to", "caused", "driven by", "as a result of", "thanks to"]
+
+# Allowed only when a cited fact is marked as a large change.
+strong_words = ["surge", "soar", "plunge", "collapse", "skyrocket", "dramatic"]
+
+# Where a summary may go. A claim takes the most restrictive level among what it
+# cites: computed data counts as `data_level`, a document carries its own level.
+# Levels run from least to most restrictive. "copy" is "with_notice" (the copied
+# text carries the label and the insight id) or "blocked"; "share" allows the
+# app's own external share. The app cannot stop screenshots; company DLP
+# (for example Microsoft Purview sensitivity labels) enforces outside it.
+[distribution]
+data_level = "internal"
+
+[distribution.levels.approved_external]
+label = "Approved for external use (MLR approved)"
+copy = "with_notice"
+share = true
+
+[distribution.levels.internal]
+label = "Internal use only · Not for promotional use"
+copy = "with_notice"
+share = false
+
+[distribution.levels.confidential]
+label = "Confidential · Do not copy or forward"
+copy = "blocked"
+share = false
+
+# `views` are the cards a role sees: the numbers, the summary and its sources for the
+# business, the governance and AI-quality cards for the people who run the platform.
+[roles.brand_lead]
+scope = "all"
+audience = "brand"
+permissions = []
+views = ["chart", "summary", "definition", "documents", "facts"]
+
+[roles.regional_sales_director]
+scope = "own"
+audience = "regional"
+permissions = []
+views = ["chart", "summary", "definition", "documents"]
+
+[roles.administrator]
+scope = "all"
+audience = "brand"
+permissions = ["audit:read", "policy:edit", "evaluation:run", "draft:read"]
+views = ["chart", "summary", "definition", "documents", "facts", "policy", "provenance", "evaluation", "audit"]

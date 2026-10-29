@@ -1,0 +1,25 @@
+# Apply once: kubectl apply -f deploy/argocd/application.yaml
+# Argo CD then follows the GitOps repo that deploy/publish-gitops.sh writes to.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insight-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: http://gitea-http.gitea.svc.cluster.local:3000/gitea_admin/insight-gitops.git
+    targetRevision: main
+    path: apps/insight-platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insight
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Governed Metric Insights</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Owner (at Celldex): Design Engineer leads this layer; the platform engineer wires data and auth. -->
+  <header class="top-bar">
+    <div class="brand">
+      <div class="product-name">Governed Metric Insights</div>
+      <div class="tagline">AI summaries of approved business metrics, checked against the numbers before anyone sees them</div>
+    </div>
+    <div class="top-bar-side">
+      <span class="prototype-badge">Prototype · synthetic data · fictional brand</span>
+      <label class="field">Signed in as
+        <select id="login"></select>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls">
+      <label class="field">Metric <select id="metric"></select></label>
+      <label class="field">Region <select id="scope"></select></label>
+      <label class="field">Summary writer <select id="narrator"></select></label>
+      <span id="me" class="muted"></span>
+    </section>
+
+    <div id="error" class="banner" hidden></div>
+
+    <div class="grid">
+      <section data-view="chart" class="card span-two">
+        <div class="card-header">
+          <h2 id="metric-title">Loading…</h2>
+          <span class="owner" title="Who owns this part at Celldex">UI: Design Engineer</span>
+        </div>
+        <div id="chart" class="chart" role="img" aria-label="Weekly metric chart"></div>
+        <div id="legend" class="legend"></div>
+      </section>
+
+      <section data-view="summary" class="card">
+        <div class="card-header">
+          <h2>Summary</h2>
+          <span class="owner">Summary writer: Director · Validator: Platform</span>
+        </div>
+        <div id="insight"></div>
+      </section>
+
+      <section data-view="definition" class="card">
+        <div class="card-header">
+          <h2>Definition</h2>
+          <span class="owner">Content: Director</span>
+        </div>
+        <div id="definition"></div>
+      </section>
+
+      <section data-view="facts" class="card span-two">
+        <div class="card-header">
+          <h2>Facts</h2>
+          <span class="owner">Analyzer: Senior Data Scientist</span>
+        </div>
+        <p class="muted small">Computed deterministically from the governed metric. The page is complete without the summary.</p>
+        <div class="tablewrap"><table id="facts"></table></div>
+      </section>
+
+      <section data-view="policy" class="card span-two">
+        <div class="card-header">
+          <h2>Policy</h2>
+          <span class="owner">Rules: Director, Medical, Compliance · Enforcement: Platform</span>
+        </div>
+        <p class="muted small">What the platform enforces on every number, chart and summary, from policy.toml.</p>
+        <div id="policy" class="policy"></div>
+      </section>
+
+      <section data-view="documents" class="card span-two">
+        <div class="card-header">
+          <h2>Documents</h2>
+          <span class="owner">Content: Brand, Market access, Medical, Field · Selection: Platform</span>
+        </div>
+        <p class="muted small">Given to the summary writer as context: only documents for your role and region, published by the data snapshot date.</p>
+        <div id="documents"></div>
+      </section>
+
+      <section data-view="provenance" class="card span-two">
+        <div class="card-header">
+          <h2>Provenance</h2>
+          <span class="owner">Platform engineer</span>
+        </div>
+        <p class="muted small">The same inputs, documents included, always produce the same insight id.</p>
+        <dl id="provenance" class="key-value"></dl>
+      </section>
+
+      <section data-view="evaluation" class="card span-two" id="evaluation-card" hidden>
+        <div class="card-header">
+          <h2>Summary writer evaluation</h2>
+          <span class="owner">Test cases and bar: Director · Runner: Platform</span>
+        </div>
+        <p class="muted small">How often each summary writer's summaries pass the validator, tested before release. The writer writes one fresh summary for each of <span id="case-count">10</span> test cases (<span id="case-shape">2 metrics × 5 views: national and 4 regions</span>), and each is checked: "9 of 10" means 9 of those summaries passed. The latest run is shown. LLM output varies between runs, so a run is a sample, not a guarantee.</p>
+        <div id="evaluations"></div>
+      </section>
+
+      <section data-view="audit" class="card span-two" id="audit-card" hidden>
+        <div class="card-header">
+          <h2>Audit log</h2>
+          <span class="owner">Platform engineer</span>
+        </div>
+        <div class="tablewrap"><table id="audit"></table></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
