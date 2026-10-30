@@ -23,6 +23,7 @@ from insight.core.claims import Claim, Narrator
 from insight.core.documents import DocumentStore, select_documents
 from insight.core.facts import AnalysisContext, Fact, FactAnalyzer, WeeklySeries
 from insight.core.policy import Forbidden, Policy, User
+from insight.core.quota import QuotaExceeded
 from insight.core.semantic import Metric, Warehouse, run_metric
 from insight.core.validator import Violation, validate
 
@@ -152,7 +153,8 @@ class InsightEngine:
                 print(json.dumps({"level": "error", "event": "narrator_error", "insight_id": insight_id,
                                   "narrator": narrator.name, "error": f"{type(error).__name__}: {error}"}),
                       file=sys.stderr, flush=True)
-                violations = [Violation("narrator_error", None,
+                # The quota message is the platform's own and tells the reader when to come back.
+                violations = [Violation("narrator_error", None, str(error) if isinstance(error, QuotaExceeded) else
                                         f"{type(error).__name__} (details in the server log, insight {insight_id})")]
         accepted = not violations
 

@@ -5,7 +5,8 @@
 #   AKS clusters         one per environment, Entra sign-in with Azure RBAC, no local accounts,
 #                        OIDC issuer and Workload Identity on
 #   app identities       one user-assigned managed identity per environment, federated with that
-#                        cluster's service account insight/insight-platform (Databricks grants follow)
+#                        cluster's service account insight/insight-platform, allowed to call the
+#                        Foundry deployment (Databricks grants follow)
 #   deploy identities    one per environment for GitHub Actions, federated with the repository's
 #                        GitHub environment of the same name (no secrets)
 #   app routing          production only: the managed NGINX ingress (one replica), whose public
@@ -22,6 +23,7 @@ GROUP=${GROUP:-rg-governed-ai-insights}
 REGISTRY=${REGISTRY:-acrgovernedaiinsights}
 NODE_SIZE=${NODE_SIZE:-Standard_D2s_v4}  # 2 vCPU, 8 GiB; v5 is not offered to this subscription in eastus
 REPOSITORY=${REPOSITORY:-klahisaac/governed-ai-insights}
+FOUNDRY_ID=${FOUNDRY_ID:-$(az cognitiveservices account show -g rg-insight-demo -n foundry-insight-demo --query id -o tsv)}
 ENVIRONMENTS=(staging production)
 
 OWNER_ID=$(gh api "repos/$REPOSITORY" --jq .owner.id)
@@ -75,6 +77,7 @@ for environment in "${ENVIRONMENTS[@]}"; do
   app=id-governed-ai-insights-app-$environment
   az identity create -g "$GROUP" -n "$app" -l "$LOCATION" -o none
   federate "$app" aks-service-account "$issuer" system:serviceaccount:insight:insight-platform
+  grant "$(az identity show -g "$GROUP" -n "$app" --query principalId -o tsv)" "Cognitive Services OpenAI User" "$FOUNDRY_ID"
 
   deployer=id-governed-ai-insights-deploy-$environment
   az identity create -g "$GROUP" -n "$deployer" -l "$LOCATION" -o none
