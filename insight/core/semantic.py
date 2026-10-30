@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
 import tomllib
@@ -124,14 +125,21 @@ class CachedWarehouse:
     the cache. The snapshot row itself is re-read at most every `snapshot_time_to_live_seconds`
     seconds, which bounds how long a newly published snapshot takes to show.
     This assumes loads publish the snapshot row last, after the data is in place.
+
+    With `refresh_in_background`, a reader never waits for that re-read: the snapshot already
+    held is served and the check runs on its own thread. A Databricks SQL warehouse stops when
+    idle and takes seconds to start again, so only the very first snapshot is read inline.
     """
 
-    def __init__(self, inner: Warehouse, snapshot_time_to_live_seconds: float = 60, maximum_entries: int = 512):
+    def __init__(self, inner: Warehouse, snapshot_time_to_live_seconds: float = 60, maximum_entries: int = 512,
+                 refresh_in_background: bool = False):
         self.inner, self.dialect = inner, inner.dialect
         self.snapshot_time_to_live_seconds = snapshot_time_to_live_seconds
         self.maximum_entries = maximum_entries
+        self.refresh_in_background = refresh_in_background
         self._snapshot: dict[str, str] | None = None
         self._checked = 0.0
+        self._refreshing = False
         self._results: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
         self._lock = threading.Lock()
         self.hits = self.misses = 0
@@ -140,12 +148,30 @@ class CachedWarehouse:
         with self._lock:
             if self._snapshot and time.monotonic() - self._checked < self.snapshot_time_to_live_seconds:
                 return dict(self._snapshot)
+            if self._snapshot and self.refresh_in_background:
+                if not self._refreshing:
+                    self._refreshing = True
+                    threading.Thread(target=self._refresh_quietly, daemon=True).start()
+                return dict(self._snapshot)
+        return self._refresh()
+
+    def _refresh(self) -> dict[str, str]:
         fresh = self.inner.snapshot()
         with self._lock:
             if fresh != self._snapshot:
                 self._results.clear()
             self._snapshot, self._checked = fresh, time.monotonic()
             return dict(fresh)
+
+    def _refresh_quietly(self) -> None:
+        try:
+            self._refresh()
+        except Exception as error:  # the snapshot held stays in use; the next read tries again
+            print(json.dumps({"level": "error", "event": "snapshot_refresh_error",
+                              "error": f"{type(error).__name__}: {error}"}), file=sys.stderr, flush=True)
+        finally:
+            with self._lock:
+                self._refreshing = False
 
     def query(self, sql: str, parameters: dict[str, Any]) -> list[dict[str, Any]]:
         key = json.dumps([self.snapshot()["source_hash"], sql, parameters], sort_keys=True, default=str)
@@ -199,10 +225,12 @@ def run_metric(
 def open_warehouse(sqlite_path: Path) -> Warehouse:
     """INSIGHT_WAREHOUSE=databricks selects Databricks SQL; otherwise the local SQLite file.
 
-    Either way, results are cached per snapshot.
+    Either way, results are cached per snapshot. Databricks checks for a new snapshot hourly and
+    in the background, so an idle warehouse is woken at most once an hour and never by a reader.
     """
     if os.environ.get("INSIGHT_WAREHOUSE") == "databricks":
         from insight.core.databricks import DatabricksWarehouse
 
-        return CachedWarehouse(DatabricksWarehouse.from_environment())
+        return CachedWarehouse(DatabricksWarehouse.from_environment(), snapshot_time_to_live_seconds=3600,
+                               refresh_in_background=True)
     return CachedWarehouse(SqliteWarehouse(sqlite_path))
