@@ -27,7 +27,6 @@ import os
 import sys
 import threading
 import time
-from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +39,7 @@ from insight.core.auth import PrototypeIdentityProvider
 from insight.core.engine import InsightEngine
 from insight.core.evaluations import EvaluationStore
 from insight.core.policy import Forbidden
+from insight.core.quota import DailyQuota, QuotaLLM
 from insight.core.semantic import open_warehouse
 from insight.domains import pharmaceutical
 from insight.evaluation_gate import evaluate
@@ -48,19 +48,19 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 DATA = Path(os.environ.get("INSIGHT_DATA_DIR") or ROOT / "data")
 VERSION = os.environ.get("INSIGHT_VERSION", "dev")
-# A public deployment: anyone can sign in as any role with the prototype tokens, so nothing a
-# visitor does may cost money or change what other visitors see. Model-backed writers, gate runs
-# and policy changes are off; reading, regenerating with the free writers and copying stay on.
+# A public deployment: anyone can sign in as any role with the prototype tokens. Everything stays
+# on, and paid model calls share a daily quota (INSIGHT_MODEL_CALLS_PER_DAY, 1000 unless set).
 PUBLIC = os.environ.get("INSIGHT_PUBLIC") == "1"
-PUBLIC_WITHHELD_PERMISSIONS = {"evaluation:run", "policy:edit"}
+MODEL_CALLS_PER_DAY = int(os.environ.get("INSIGHT_MODEL_CALLS_PER_DAY") or (1000 if PUBLIC else 0))
 
 
 class App:
-    def __init__(self, data_dir: Path = DATA, public: bool = PUBLIC):
+    def __init__(self, data_dir: Path = DATA, public: bool = PUBLIC, model_calls_per_day: int = MODEL_CALLS_PER_DAY):
         self.public = public
-        domain = pharmaceutical.load(model_writers=not public)
-        if public:
-            domain = replace(domain, policy=domain.policy.without_permissions(PUBLIC_WITHHELD_PERMISSIONS))
+        self.quota = DailyQuota(model_calls_per_day, data_dir / "model_calls.json") if model_calls_per_day else None
+        domain = pharmaceutical.load(self.quota)
+        self.model_writers = {name for name, narrator in domain.narrators.items()
+                              if isinstance(getattr(narrator, "llm", None), QuotaLLM)}
         self.domain = telemetry.traced_domain(domain)
         self.warehouse = telemetry.TracedWarehouse(open_warehouse(data_dir / "warehouse.db"))
         self.audit = AuditLog(data_dir / "audit.jsonl")
@@ -157,6 +157,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return HTTPStatus.FORBIDDEN, {"error": "evaluation:run required"}
             if narrator not in domain.narrators:
                 return HTTPStatus.BAD_REQUEST, {"error": f"unknown narrator {narrator}"}
+            if narrator in app.model_writers:
+                # One model call per case; refuse up front rather than run out halfway.
+                cases = len(domain.metrics) * (1 + len(domain.scope_members(app.warehouse)))
+                quota = app.quota.status()
+                if quota["used"] + cases > quota["limit"]:
+                    return HTTPStatus.TOO_MANY_REQUESTS, {
+                        "error": f"a gate run needs {cases} model calls and {quota['limit'] - quota['used']} "
+                                 f"of today's {quota['limit']} are left"}
             with app.gate_lock:
                 if narrator in app.gate_runs:
                     return HTTPStatus.CONFLICT, {"error": f"the gate for {narrator} is already running"}
@@ -217,6 +225,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     "scope_members": domain.scope_members(app.warehouse),
                     "warehouse": app.warehouse.dialect,  # sqlite or databricks; smoke tests check it
                     "public": app.public,
+                    "model_calls": app.quota.status() if app.quota else None,
                 }
             if path == "/api/audit":
                 if not policy.can(user, "audit:read"):
@@ -257,7 +266,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                         telemetry.annotate(current, insight_id=insight["id"], status=insight["status"],
                                            cache=insight["trace"].get("cache", "miss"))
                     telemetry.record_insight(insight)
-                    return HTTPStatus.OK, result
+                    return HTTPStatus.OK, {**result, "model_calls": app.quota.status() if app.quota else None}
                 except Forbidden as error:
                     return HTTPStatus.FORBIDDEN, {"error": str(error)}
             return HTTPStatus.NOT_FOUND, {"error": "not found"}

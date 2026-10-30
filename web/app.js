@@ -699,6 +699,12 @@ async function renderAudit() {
 
 // ---- flow ----------------------------------------------------------------------
 
+function renderModelCalls(quota) {
+  const node = byId("model-calls");
+  node.hidden = !quota;
+  if (quota) node.textContent = `model calls today: ${quota.used} of ${quota.limit}`;
+}
+
 async function refresh(regenerate = false) {
   // Summaries can take seconds; when the controls change again meanwhile, only the newest request may draw.
   const request = ++state.request;
@@ -711,6 +717,7 @@ async function refresh(regenerate = false) {
     const view = await api(`/api/metrics/${state.metric}?${query}`);
     if (request !== state.request) return;
     renderChart(view.series, view.definition);
+    renderModelCalls(view.model_calls);
     state.view = view;
     renderInsight(view.insight, view.facts, view.documents);
     renderDefinition(view.definition);
@@ -740,11 +747,12 @@ async function signIn(token) {
   if (catalog.public) {
     const badge = byId("prototype-badge");
     badge.textContent = "Public prototype · synthetic data · fictional brand";
-    badge.title = "Anyone can sign in as any role here, so model-backed summary writers, evaluation runs and policy changes are off.";
+    badge.title = "Anyone can sign in as any role here. Model calls (new summaries, regenerations, evaluation runs) share a daily quota that resets at 00:00 UTC.";
   }
   state.metricTitles = Object.fromEntries(catalog.metrics.map((metric) => [metric.name, metric.title]));
   state.regionNames = Object.fromEntries(catalog.scope_members.map((member) => [member.code, member.name]));
   renderPolicy(catalog.policy);
+  renderModelCalls(catalog.model_calls);
   state.scope = state.me.scope_value ?? "";
   state.shownScope = null;
   state.narrator = state.narrator || catalog.narrators[0].name;

@@ -13,6 +13,7 @@ from insight.core.engine import Domain
 from insight.core.foundry import FoundryChat
 from insight.core.llm import ClaudeAPI
 from insight.core.policy import Policy
+from insight.core.quota import DailyQuota, QuotaLLM
 from insight.core.semantic import Metric, Warehouse
 from insight.domains.pharmaceutical.analyzers import LaunchAnalyzer, PersistenceAnalyzer
 from insight.domains.pharmaceutical.narrators import (
@@ -30,15 +31,16 @@ def _regions(warehouse: Warehouse) -> list[dict[str, str]]:
     return warehouse.query("SELECT code, name FROM regions ORDER BY code", {})
 
 
-def load(model_writers: bool = True) -> Domain:
-    """model_writers=False leaves out every writer that calls a paid model, whatever is configured."""
+def load(quota: DailyQuota | None = None) -> Domain:
+    """With a quota, every call a writer makes to a paid model counts against it."""
     # Display order: the launch headline first.
     metrics = [Metric.load(HERE / "metrics" / f"{name}.toml") for name in ("new_to_brand_patients", "eight_week_persistence")]
+    capped = (lambda llm: QuotaLLM(llm, quota)) if quota else (lambda llm: llm)
     narrators = [TemplateNarrator()]
-    if model_writers and (claude := ClaudeAPI.from_environment()):  # only when ANTHROPIC_API_KEY is set
-        narrators.append(ClaudeAPINarrator(claude))
-    if model_writers and (foundry := FoundryChat.from_environment()):  # only when a Foundry deployment is configured
-        narrators.append(FoundryNarrator(foundry))
+    if claude := ClaudeAPI.from_environment():  # only when ANTHROPIC_API_KEY is set
+        narrators.append(ClaudeAPINarrator(capped(claude)))
+    if foundry := FoundryChat.from_environment():  # only when a Foundry deployment is configured
+        narrators.append(FoundryNarrator(capped(foundry)))
     narrators.append(SloppyNarrator())
     return Domain(
         name="pharmaceutical",

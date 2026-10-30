@@ -1,6 +1,7 @@
 # What every AKS environment shares: the pod signs in as its managed identity through
-# Workload Identity and reads the governed metrics from Databricks. The overlay names the
-# identity (service account annotation) and the schema.
+# Workload Identity, reads the governed metrics from Databricks and calls the Foundry writer
+# (provision.sh grants the identity both). The overlay names the identity (service account
+# annotation) and the schema.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 patches:
@@ -22,3 +23,7 @@ patches:
                   - { name: DATABRICKS_HOST, value: "https://adb-7405604521901022.2.azuredatabricks.net" }
                   - { name: DATABRICKS_WAREHOUSE_ID, value: b2ad2a94330c6637 }
                   - { name: DATABRICKS_CATALOG, value: dbw_insight_demo_7405604521901022 }
+                  - { name: FOUNDRY_ENDPOINT, value: "https://foundry-insight-demo.cognitiveservices.azure.com" }
+                  - { name: FOUNDRY_DEPLOYMENT, value: gpt-5-mini }
+                  - { name: FOUNDRY_INPUT_PRICE_PER_MILLION, value: "0.25" }
+                  - { name: FOUNDRY_OUTPUT_PRICE_PER_MILLION, value: "2.0" }

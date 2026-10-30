@@ -34,4 +34,5 @@ patches:
                 env:
                   - { name: DATABRICKS_SCHEMA, value: pharmaceutical_production }
                   - { name: INSIGHT_PUBLIC, value: "1" }  # reachable from the internet (ingress.yaml)
+                  - { name: INSIGHT_MODEL_CALLS_PER_DAY, value: "1000" }  # shared by every visitor
                   - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment=production,k8s.namespace.name=insight" }
