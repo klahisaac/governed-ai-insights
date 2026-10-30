@@ -768,13 +768,15 @@ async function signIn(token) {
 
 async function main() {
   const logins = await (await fetch("/api/prototype-logins")).json();
-  fillSelect(byId("login"), logins.map((login) => [login.token, login.name]), logins[0].token);
+  // Visitors start as the administrator, who sees every card; the menu switches role.
+  const start = (logins.find((login) => login.role === "administrator") ?? logins[0]).token;
+  fillSelect(byId("login"), logins.map((login) => [login.token, login.name]), start);
   byId("login").addEventListener("change", (event) => signIn(event.target.value));
   byId("insight").addEventListener("copy", onSummaryCopy);
   byId("metric").addEventListener("change", (event) => { state.metric = event.target.value; refresh(); });
   byId("scope").addEventListener("change", (event) => { state.scope = event.target.value; refresh(); });
   byId("narrator").addEventListener("change", (event) => { state.narrator = event.target.value; refresh(); });
-  await signIn(logins[0].token);
+  await signIn(start);
 }
 
 main();
