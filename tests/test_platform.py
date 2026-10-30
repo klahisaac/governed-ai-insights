@@ -6,6 +6,8 @@ Run: python3 -m unittest discover -s tests -v
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -120,6 +122,36 @@ class PlatformTest(unittest.TestCase):
         inner.source = "b"
         run_metric(cached, self.metric, ["week"])
         self.assertEqual(inner.queries, 2)
+
+    def test_a_background_refresh_never_makes_a_reader_wait(self) -> None:
+        class Slow:
+            dialect = "sqlite"
+
+            def __init__(self, inner):
+                self.inner, self.source, self.release = inner, "a", threading.Event()
+                self.release.set()
+
+            def query(self, sql, parameters):
+                return self.inner.query(sql, parameters)
+
+            def snapshot(self):
+                self.release.wait(10)  # an idle warehouse starting up
+                return {**self.inner.snapshot(), "source_hash": self.source}
+
+        inner = Slow(self.engine.warehouse)
+        cached = CachedWarehouse(inner, snapshot_time_to_live_seconds=0, refresh_in_background=True)
+        self.assertEqual(cached.snapshot()["source_hash"], "a")  # the first read is inline
+        inner.release.clear()
+        inner.source = "b"
+        started = time.monotonic()
+        self.assertEqual(cached.snapshot()["source_hash"], "a")  # served while the check waits
+        self.assertLess(time.monotonic() - started, 1)
+        inner.release.set()
+        for _ in range(100):
+            if cached.snapshot()["source_hash"] == "b":
+                break
+            time.sleep(0.02)
+        self.assertEqual(cached.snapshot()["source_hash"], "b")
 
     # Policy
 

@@ -70,6 +70,18 @@ class App:
         self.gate_runs: set[str] = set()  # writers whose gate is running now
         self.gate_lock = threading.Lock()
 
+    def warm(self) -> None:
+        """Fill the warehouse cache with every view's queries (free writer only), so no reader
+        waits for an idle Databricks warehouse to start. Runs once, on its own thread, at start."""
+        try:
+            members = [None] + [member["code"] for member in self.domain.scope_members(self.warehouse)]
+            for metric in self.domain.metrics:
+                for scope in members:
+                    self.engine.build(metric, scope, "brand" if scope is None else "regional", "template")
+        except Exception as error:  # readers fill the cache themselves instead
+            print(json.dumps({"level": "error", "event": "warm_error", "error": f"{type(error).__name__}: {error}"}),
+                  file=sys.stderr, flush=True)
+
 
 def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
@@ -311,7 +323,9 @@ def main() -> None:
     host = os.environ.get("INSIGHT_HOST", "127.0.0.1")
     tracing = telemetry.setup_tracing()
     telemetry.BUILD_INFO.set(1, version=VERSION)
-    server = ThreadingHTTPServer((host, port), make_handler(App()))
+    app = App()
+    threading.Thread(target=app.warm, daemon=True).start()
+    server = ThreadingHTTPServer((host, port), make_handler(app))
     print(f"serving on http://{host}:{port} (tracing {'on' if tracing else 'off'})", file=sys.stderr)
     server.serve_forever()
 
