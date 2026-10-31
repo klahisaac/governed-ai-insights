@@ -145,17 +145,19 @@ Recent comparison (10 cases, same schema): Claude Sonnet 5.5 10/10 ($0.084, 31 s
 ## Staging and production on AKS
 
 ```
-push to main ──▶ ci ──passes──▶ release: build once, push to ACR, deploy.sh staging <digest>,
-                                         smoke test (app reads Databricks), tag staged-<commit>
-gh workflow run promote -f commit=<sha> ──▶ approval ──▶ deploy.sh production <same digest>, smoke test
+push to main ──▶ ci ──passes──▶ release: build once, push to ACR, deploy.sh production <digest>,
+                                         smoke test (app reads Databricks)
+gh workflow run redeploy -f commit=<earlier sha> ──▶ deploy.sh production <that digest>, smoke test
 ```
 
-- **Two clusters** (`aks-governed-ai-insights-staging`, `-production`), one `Standard_D2s_v4` node each, each with its own kube-prometheus-stack and Jaeger from the pinned charts. Entra sign-in with Azure RBAC, no local accounts. One registry (`acrgovernedaiinsights`): staging pushes, production pulls. `deploy/azure/provision.sh` creates all of it and can be run again.
+Staging is stopped (`az aks stop`) to save cost, so pull request CI on kind is the test before production. To use it again: `az aks start -g rg-governed-ai-insights -n aks-governed-ai-insights-staging`, then `deploy/deploy.sh staging <image>`.
+
+- **Two clusters** (`aks-governed-ai-insights-staging`, `-production`), one `Standard_D2s_v4` node each, each with its own kube-prometheus-stack and Jaeger from the pinned charts. Entra sign-in with Azure RBAC, no local accounts. One registry (`acrgovernedaiinsights`), pushed to by release. `deploy/azure/provision.sh` creates all of it and can be run again.
 - **The app reads Databricks with no secret.** Each environment has a user-assigned managed identity, federated with that cluster's service account `insight/insight-platform` (Workload Identity). The app exchanges the projected service account token for an Entra token (`insight/core/azure_credentials.py`). In Databricks the identity holds `CAN_USE` on the SQL warehouse and `USE SCHEMA`, `SELECT` on its own schema only (`pharmaceutical_staging`, `pharmaceutical_production`). Pull request CI reads `pharmaceutical_demo`.
-- **GitHub deploys with no secret either.** Each GitHub environment (`staging`, `production`) has a deploy identity federated with that environment only. It can sign in to its own cluster and nothing else; staging may push to the registry, production may only pull. The production environment needs an approval and accepts runs from main only.
-- **The same image all the way:** release builds once and deploys by digest. Only a digest that passed the staging smoke test is tagged `staged-<commit>`, and promote deploys that digest, so production runs the bytes staging tested.
-- **Public in production only:** production is https://insight.isaacon.dev: Cloudflare proxies the name (`deploy/cloudflare`, Terraform) to the AKS app routing NGINX (`deploy/overlays/production/ingress.yaml`), which redirects `/metrics` away. The prototype's sign-in tokens are in this repository, so production runs with `INSIGHT_PUBLIC=1`: everything stays on, and paid model calls (new summaries, regenerations, gate runs) share a quota of 1000 a day (`INSIGHT_MODEL_CALLS_PER_DAY`, reset at 00:00 UTC, counted in the data volume). Staging has no public route; the smoke test reaches both through `kubectl port-forward`. On AKS the Foundry writer signs in with the pod's identity; the Claude writer is off until its key comes from Key Vault.
-- **Cost:** two nodes, two load balancers for outbound traffic (production's also carries the ingress IP) and the registry, roughly $150 to $200 a month while the clusters run. `az aks stop` on a cluster stops its node charges.
+- **GitHub deploys with no secret either.** Each GitHub environment (`staging`, `production`) has a deploy identity federated with that environment only. It can sign in to its own cluster and push to the registry, and nothing else. The production environment accepts runs from main only.
+- **The same image all the way:** release builds once, tags it with the commit and deploys it by digest; redeploy looks up an earlier commit's digest, so a rollback runs the exact bytes that were released.
+- **Public in production only:** production is https://insight.isaacon.dev: Cloudflare proxies the name (`deploy/cloudflare`, Terraform) to the AKS app routing NGINX (`deploy/overlays/production/ingress.yaml`), which redirects `/metrics` away. The prototype's sign-in tokens are in this repository, so production runs with `INSIGHT_PUBLIC=1`: everything stays on, and paid model calls (new summaries, regenerations, gate runs) share a quota of 1000 a day (`INSIGHT_MODEL_CALLS_PER_DAY`, reset at 00:00 UTC, counted in the data volume). Staging has no public route; the smoke test reaches the app through `kubectl port-forward`. On AKS the Foundry writer signs in with the pod's identity; the Claude writer is off until its key comes from Key Vault.
+- **Cost:** with staging stopped, one node, one load balancer (outbound traffic and the ingress IP) and the registry, roughly $80 to $100 a month. A stopped cluster is billed only for its disks.
 
 ## Deploying to a Kubernetes lab cluster (Argo CD, Prometheus, Jaeger, Grafana)
 

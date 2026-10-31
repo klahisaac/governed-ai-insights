@@ -1,6 +1,7 @@
-# After ci passes on main: build the image once, push it, deploy it to the staging AKS cluster,
-# and run the smoke test there, where the app reads Databricks through Workload Identity. A
-# passing smoke test tags the digest staged-<commit>, which is what promote looks for.
+# After ci passes on main: build the image once, push it, deploy it to the production AKS
+# cluster by digest, and run the smoke test there, where the app reads Databricks through
+# Workload Identity. Staging is stopped (az aks stop) to save cost, so pull request CI on kind is
+# the test before production. redeploy puts an earlier commit's image back.
 name: release
 
 on:
@@ -13,17 +14,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-staging
+  group: deploy-production
   cancel-in-progress: false
 
 jobs:
-  staging:
+  production:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
-    environment: staging
+    environment: production
     permissions:
       contents: read
-      id-token: write  # OIDC token for the staging deploy identity
+      id-token: write  # OIDC token for the production deploy identity
     env:
       COMMIT: ${{ github.event.workflow_run.head_sha }}
       REPOSITORY: ${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform
@@ -46,23 +47,20 @@ jobs:
       - uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29  # v1.3
         with:
           kubelogin-version: v0.2.21
-      - name: Connect to the staging cluster
+      - name: Connect to the production cluster
         run: |
           az aks get-credentials -g "${{ vars.AKS_RESOURCE_GROUP }}" -n "${{ vars.AKS_CLUSTER }}" --overwrite-existing
           kubelogin convert-kubeconfig -l azurecli
-      - run: deploy/deploy.sh staging "$IMAGE"
+      - run: deploy/deploy.sh production "$IMAGE"
       - run: deploy/smoke-test.sh
         env:
           SMOKE_WAREHOUSE: databricks
-      - name: Mark the digest as staged
+      - name: Summary
         run: |
-          # Same manifest, so the same digest; AcrPush is enough (an import would need more).
-          docker tag "$REPOSITORY:$COMMIT" "$REPOSITORY:staged-$COMMIT"
-          docker push "$REPOSITORY:staged-$COMMIT"
           {
-            echo "Staging runs \`$IMAGE\` (commit $COMMIT)."
+            echo "Production runs \`$IMAGE\` (commit $COMMIT)."
             echo
-            echo "Promote it: \`gh workflow run promote -f commit=$COMMIT\`"
+            echo "Roll back: \`gh workflow run redeploy -f commit=<earlier sha>\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Show cluster state
         if: failure()
