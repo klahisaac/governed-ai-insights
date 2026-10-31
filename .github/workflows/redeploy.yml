@@ -1,13 +1,13 @@
-# Put a commit that passed staging into production. Only a digest that staging tagged
-# staged-<commit> can be promoted, and it is deployed by digest, so production runs the exact
-# image staging tested. The production environment requires an approval before the job starts.
-name: promote
+# Put an earlier release back into production, for a rollback. Only an image release built
+# (tagged <commit>) can be redeployed, and it is deployed by digest, so production runs the exact
+# image that was released.
+name: redeploy
 
 on:
   workflow_dispatch:
     inputs:
       commit:
-        description: Full commit sha on main whose staging release passed
+        description: Full commit sha on main that release built
         required: true
 
 permissions:
@@ -35,11 +35,11 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Find the digest staging tested
+      - name: Find the digest release built
         run: |
           az acr login -n "${{ vars.ACR_NAME }}"
-          digest=$(docker buildx imagetools inspect "${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform:staged-$COMMIT" \
-            --format '{{json .Manifest.Digest}}' | tr -d '"') || { echo "::error::commit $COMMIT has not passed staging"; exit 1; }
+          digest=$(docker buildx imagetools inspect "${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform:$COMMIT" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"') || { echo "::error::release has not built commit $COMMIT"; exit 1; }
           echo "IMAGE=${{ vars.ACR_NAME }}.azurecr.io/ai-insight-platform@$digest" >> "$GITHUB_ENV"
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
       - uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29  # v1.3

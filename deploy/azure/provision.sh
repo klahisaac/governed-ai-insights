@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Azure resources for the staging and production environments. Safe to run again.
 #
-#   container registry   one, shared: staging pushes, production pulls the same digest
+#   container registry   one, shared: release pushes and deploys from the production identity
 #   AKS clusters         one per environment, Entra sign-in with Azure RBAC, no local accounts,
 #                        OIDC issuer and Workload Identity on
 #   app identities       one user-assigned managed identity per environment, federated with that
@@ -11,6 +11,8 @@
 #                        GitHub environment of the same name (no secrets)
 #   app routing          production only: the managed NGINX ingress (one replica), whose public
 #                        IP deploy/cloudflare points insight.isaacon.dev at
+#
+# Staging is kept stopped to save cost (az aks stop); release deploys straight to production.
 #
 # The GitHub subjects use the repository's immutable ids (GitHub issues them that way), so a
 # deleted and recreated repository needs this script run again.
@@ -87,11 +89,9 @@ for environment in "${ENVIRONMENTS[@]}"; do
   grant "$deployer_principal" "Azure Kubernetes Service Cluster User Role" "$cluster_id"
   # The deploy installs the monitoring charts too, which bring cluster-wide CRDs and RBAC.
   grant "$deployer_principal" "Azure Kubernetes Service RBAC Cluster Admin" "$cluster_id"
-  if [ "$environment" = staging ]; then
-    grant "$deployer_principal" AcrPush "$REGISTRY_ID"   # staging builds and pushes the image
-  else
-    grant "$deployer_principal" AcrPull "$REGISTRY_ID"   # production only checks the digest exists
-  fi
+  # Release builds and pushes from either environment; production is the one it runs from while
+  # staging is stopped.
+  grant "$deployer_principal" AcrPush "$REGISTRY_ID"
 done
 
 echo
